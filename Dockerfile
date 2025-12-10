@@ -1,6 +1,102 @@
 # Multi-stage Dockerfile for Laravel + Vite (production)
+
+# Stage: php_builder - install PHP deps, Composer, Node 20 and build frontend
+FROM php:8.4-fpm-bullseye AS php_builder
+WORKDIR /app
+
+# Install system packages required for PHP extensions and Node setup
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        gnupg \
+        curl \
+        git \
+        unzip \
+        zip \
+        libzip-dev \
+        libpng-dev \
+        libjpeg-dev \
+        libfreetype6-dev \
+        libonig-dev \
+        libxml2-dev \
+        libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Configure and install PHP extensions
+RUN docker-php-ext-configure gd --with-jpeg --with-freetype \
+    && docker-php-ext-install -j$(nproc) gd pdo pdo_mysql pdo_pgsql zip bcmath opcache
+
+# Install composer binary
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
+# Copy composer files and install PHP dependencies first (cache benefit)
+COPY composer.json composer.lock ./
+RUN composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist
+
+# Copy whole application (needed so artisan and wayfinder are available during frontend build)
+COPY . ./
+
+# Install Node.js 20 so Vite runs with a supported Node version
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install frontend deps and build production assets
+RUN npm ci --ignore-scripts \
+    && npm run build
+
+# Remove development artifacts to keep the builder slim
+RUN rm -rf node_modules src tests
+
+
+# Stage: final image with nginx + php-fpm
+FROM php:8.4-fpm-bullseye
+WORKDIR /var/www/html
+
+# Install runtime packages (nginx + supervisor)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        nginx \
+        supervisor \
+        procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Reinstall any PHP extensions needed at runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libzip-dev \
+        libpng-dev \
+        libjpeg-dev \
+        libfreetype6-dev \
+        libonig-dev \
+        libxml2-dev \
+        libpq-dev \
+    && docker-php-ext-configure gd --with-jpeg --with-freetype \
+    && docker-php-ext-install -j$(nproc) gd pdo pdo_mysql pdo_pgsql zip bcmath opcache \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy app from builder
+COPY --from=php_builder /app /var/www/html
+
+# copy nginx and supervisor configuration
+COPY docker/nginx.conf /etc/nginx/sites-available/default
+COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+
+# Create storage and bootstrap cache directories and set permissions
+RUN mkdir -p /var/www/html/storage /var/www/html/bootstrap/cache \
+    && chown -R www-data:www-data /var/www/html
+
+EXPOSE 80
+
+# healthcheck (optional)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 CMD curl -f http://localhost/ || exit 1
+
+CMD ["/usr/bin/supervisord","-n","-c","/etc/supervisor/conf.d/supervisord.conf"]
+# Multi-stage Dockerfile for Laravel + Vite (production)
 # Stage 1: build frontend (Vite)
-FROM node:18-bullseye AS node_builder
+## Stage: php_builder (install PHP deps, build frontend using Node 20, prepare app)
+FROM php:8.4-fpm-bullseye AS php_builder
 WORKDIR /app
 # copy package files and install deps
 COPY package*.json ./
@@ -32,6 +128,7 @@ RUN apt-get update \
         libpq-dev \
         zip \
         curl \
+        gnupg \
     && rm -rf /var/lib/apt/lists/*
 
 # configure and install PHP extensions
@@ -90,6 +187,14 @@ COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 # create storage/logs and bootstrap cache directories and set permissions
 RUN mkdir -p /var/www/html/storage /var/www/html/bootstrap/cache \
     && chown -R www-data:www-data /var/www/html
+    RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+        && apt-get install -y nodejs \
+        && npm --version || true
+
+    # Install frontend dependencies and build assets (runs `php artisan` via wayfinder plugin)
+    RUN npm ci --ignore-scripts \
+        && npm run build
+
 
 # expose port
 EXPOSE 80
