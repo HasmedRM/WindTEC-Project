@@ -1,0 +1,15 @@
+node_modules
+vendor
+.git
+.gitignore
+Dockerfile
+docker-compose.yml
+.env
+.env.*
+storage/*.key
+npm-debug.log
+yarn-error.log
+public/hot
+public/storage
+storage/framework/cache/data
+bootstrap/cache

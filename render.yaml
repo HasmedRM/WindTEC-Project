@@ -1,0 +1,20 @@
+# Example Render manifest for Docker deployment
+# Update `name`, `env`, and environment variables as needed before deploy.
+services:
+  - type: web
+    name: windtec-project
+    env: docker
+    dockerfilePath: Dockerfile
+    plan: free
+    # Build command and Start command are not required when using Dockerfile
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: 'false'
+      - key: APP_URL
+        value: https://your-app.onrender.com
+      # Do NOT include secrets here; add them in Render dashboard instead
+
+# Optional: add a database service on Render and reference its connection string
+# You can also use an external Postgres and configure DB_HOST, DB_PORT, DB_DATABASE, DB_USERNAME, DB_PASSWORD
