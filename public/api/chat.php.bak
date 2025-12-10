@@ -1,0 +1,215 @@
+<?php
+// public/api/chat.php
+
+// 1. Configuração de CORS
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type');
+
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(204);
+    exit;
+}
+
+// 2. Recebe os dados
+$input = json_decode(file_get_contents('php://input'), true);
+if (!is_array($input) || empty($input['message'])) {
+    http_response_code(400);
+    echo json_encode(['answer' => 'Erro: Pedido inválido ou sem mensagem.']);
+    exit;
+}
+
+$userMessage = trim($input['message']);
+
+// 3. Carrega o manual (Cérebro do Bot)
+$contextFile = __DIR__ . '/contexto_tecnico.txt';
+$contextText = '';
+if (file_exists($contextFile)) {
+    $contextText = file_get_contents($contextFile);
+} else {
+    // Aviso de segurança caso o arquivo não exista
+    $contextText = "AVISO DO SISTEMA: O arquivo de contexto técnico não foi encontrado no servidor.";
+}
+
+// 4. Monta o Prompt
+$prompt = "Você é um assistente técnico especialista em guindastes e rigging. Use estritamente o contexto abaixo para responder. Se a resposta não estiver no contexto, diga que não sabe.\n\nCONTEXTO TÉCNICO:\n";
+$prompt .= $contextText . "\n\nPERGUNTA DO USUÁRIO:\n" . $userMessage;
+
+// 5. SUA CHAVE API
+$apiKey = 'AIzaSyDu7f4CInovX5jS5_8ej_TT0EUPN51yWzg';
+
+// Backup simples do fluxo anterior (não sobrescreve se já existir backup)
+$backupFile = __DIR__ . '/chat.php.bak';
+if (!file_exists($backupFile)) {
+    copy(__FILE__, $backupFile);
+}
+
+// Helper: faz requisição HTTP (GET ou POST)
+function http_request($url, $postBody = null) {
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    if ($postBody !== null) {
+        curl_setopt($ch, CURLOPT_POST, true);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+        curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($postBody));
+    }
+    $resp = curl_exec($ch);
+    $err = curl_error($ch);
+    $status = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return [$resp, $err, $status];
+}
+
+// 1) Tentar listar modelos (ListModels) para descobrir modelos e métodos suportados
+$listEndpoints = [
+    'https://generativelanguage.googleapis.com/v1/models',
+    'https://generativelanguage.googleapis.com/v1beta/models',
+    'https://generativeai.googleapis.com/v1/models'
+];
+
+$models = null;
+foreach ($listEndpoints as $endpoint) {
+    $url = $endpoint . '?key=' . urlencode($apiKey);
+    list($resp, $err, $status) = http_request($url);
+    if ($resp && $status >= 200 && $status < 300) {
+        $decoded = json_decode($resp, true);
+        if (isset($decoded['models']) && is_array($decoded['models'])) {
+            $models = $decoded['models'];
+            break;
+        }
+        // Some APIs may return top-level array
+        if (is_array($decoded) && !empty($decoded)) {
+            // try to detect models list structure
+            foreach ($decoded as $k => $v) {
+                if ($k === 'models' && is_array($v)) {
+                    $models = $v; break 2;
+                }
+            }
+        }
+    }
+}
+
+// If we couldn't list models, fall back to trying some known model ids
+$candidateModelIds = [];
+if (is_array($models)) {
+    foreach ($models as $m) {
+        // model name can be 'models/text-bison-001' or full resource
+        if (isset($m['name'])) {
+            $name = $m['name'];
+            $candidateModelIds[] = preg_replace('#^models/#', '', $name);
+        }
+    }
+}
+
+// Always add some common fallbacks
+$candidateModelIds = array_merge($candidateModelIds, ['text-bison-001', 'text-bison', 'gemini-1.5', 'gemini-1.5-flash', 'gemini-1.5-flash-001']);
+
+// Remove duplicates
+$candidateModelIds = array_values(array_unique($candidateModelIds));
+
+// Methods to try in order with corresponding body shapes
+$methodsToTry = [
+    'generateContent', // generativelanguage v1beta style
+    'generate',        // older/other styles
+    'generateText',    // text-bison style
+];
+
+$finalAnswer = null;
+$finalRaw = null;
+$finalStatus = null;
+
+foreach ($candidateModelIds as $modelId) {
+    foreach ($methodsToTry as $method) {
+        // build endpoint (use v1 base)
+        $url = 'https://generativelanguage.googleapis.com/v1/models/' . urlencode($modelId) . ':' . $method . '?key=' . urlencode($apiKey);
+
+        // choose body shape depending on method
+        if ($method === 'generateContent') {
+            $body = [
+                'contents' => [
+                    ['parts' => [['text' => $prompt]]]
+                ],
+                'generationConfig' => ['temperature' => 0.2, 'maxOutputTokens' => 800]
+            ];
+        } elseif ($method === 'generate') {
+            $body = [
+                'prompt' => ['text' => $prompt],
+                'temperature' => 0.2,
+                'maxOutputTokens' => 800
+            ];
+        } else { // generateText
+            $body = [
+                'input' => $prompt,
+                'temperature' => 0.2,
+                'maxOutputTokens' => 800
+            ];
+        }
+
+        list($resp, $err, $status) = http_request($url, $body);
+        $finalRaw = $resp;
+        $finalStatus = $status;
+
+        if ($resp === false || $resp === null) {
+            // network error, continue to next
+            continue;
+        }
+
+        $decoded = json_decode($resp, true);
+
+        // If API returned model/method not supported, try next
+        if (is_array($decoded) && isset($decoded['error'])) {
+            // Keep trying other methods/models
+            continue;
+        }
+
+        // Try to extract answer from known shapes
+        $answer = null;
+        if (is_array($decoded)) {
+            if (isset($decoded['candidates'][0]['content']['parts'][0]['text'])) {
+                $answer = $decoded['candidates'][0]['content']['parts'][0]['text'];
+            } elseif (isset($decoded['candidates'][0]['output'])) {
+                $answer = $decoded['candidates'][0]['output'];
+            } elseif (isset($decoded['output'])) {
+                // older shape
+                if (is_string($decoded['output'])) {
+                    $answer = $decoded['output'];
+                } elseif (isset($decoded['output'][0]['content'][0]['text'])) {
+                    $answer = $decoded['output'][0]['content'][0]['text'];
+                }
+            } elseif (isset($decoded['text'])) {
+                $answer = $decoded['text'];
+            } elseif (isset($decoded['results'][0]['output_text'])) {
+                $answer = $decoded['results'][0]['output_text'];
+            }
+        }
+
+        if ($answer !== null) {
+            $finalAnswer = $answer;
+            break 2; // found a working method
+        } else {
+            // If no explicit text but status 200, return raw JSON as fallback
+            $finalAnswer = is_string($resp) ? $resp : json_encode($resp);
+            break 2;
+        }
+    }
+}
+
+// If still null, build helpful error
+if ($finalAnswer === null) {
+    $errMsg = 'Não foi possível chamar um modelo gerador disponível. Tente usar ListModels para verificar modelos disponíveis.';
+    // include last raw response if present
+    if ($finalRaw) {
+        $errMsg .= ' Última resposta: ' . $finalRaw;
+    }
+    http_response_code(500);
+    header('Content-Type: application/json');
+    echo json_encode(['answer' => $errMsg]);
+    exit;
+}
+
+// Return result
+header('Content-Type: application/json');
+echo json_encode(['answer' => $finalAnswer, 'raw' => $finalRaw, 'status' => $finalStatus]);
+exit;
+
+?>
