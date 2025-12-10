@@ -5,9 +5,10 @@ WORKDIR /app
 # copy package files and install deps
 COPY package*.json ./
 RUN npm ci --ignore-scripts
-# copy project files required for building assets
-COPY resources resources
-COPY vite.config.ts tsconfig.json package*.json .
+# Copy the rest of the project into the node builder (respects `.dockerignore`).
+# We keep the earlier `package*.json` copy + `npm ci` to leverage Docker cache,
+# then copy the remaining files required for the Vite build and run the build.
+COPY . .
 # ensure .env.build to avoid errors if build references env variables (optional)
 # build assets (assumes `npm run build` writes to `public/build`)
 RUN npm run build
