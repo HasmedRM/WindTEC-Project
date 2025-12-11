@@ -33,4 +33,7 @@ export default defineConfig({
             '@': path.resolve(__dirname, 'resources/js'),
         },
     },
+
+    // Base path relativo seguro para produção HTTPS
+    base: '/build/',
 });
