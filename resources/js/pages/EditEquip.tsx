@@ -1,7 +1,7 @@
 import AppLayout from '@/layouts/app-layout';
 import { Head, usePage, Form } from '@inertiajs/react';
 import { Button } from '@/components/ui/button';
-import { update as equipamentosUpdate } from '@/routes/equipamentos';
+import { update as equipamentosUpdate } from '@/routes/equipamentos/index';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import InputError from '@/components/input-error';

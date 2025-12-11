@@ -1,7 +1,7 @@
 import AppLayout from '@/layouts/app-layout';
 import { Head, Form } from '@inertiajs/react';
 import { Button } from '@/components/ui/button';
-import { store as equipamentosStore } from '@/routes/equipamentos';
+import { store as equipamentosStore } from '@/routes/equipamentos/index';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import InputError from '@/components/input-error';
