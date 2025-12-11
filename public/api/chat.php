@@ -51,8 +51,8 @@ if (!$apiKey) {
     exit;
 }
 
-// 6. Configura a URL do Gemini 1.5 Flash (Versão Estável)
-$url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key=' . $apiKey;
+// 6. Configura a URL do Gemini 1.5 Flash (CORREÇÃO AQUI: removido o -001)
+$url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=' . $apiKey;
 
 // 7. Monta o corpo da requisição (JSON Estruturado)
 $body = [
