@@ -5,6 +5,8 @@ import laravel from 'laravel-vite-plugin';
 import { defineConfig } from 'vite';
 import path from 'path';
 
+const isProd = process.env.NODE_ENV === 'production';
+
 export default defineConfig({
     plugins: [
         laravel({
@@ -14,16 +16,21 @@ export default defineConfig({
         }),
         react(),
         tailwindcss(),
-        wayfinder({
-            formVariants: true,
-        }),
-    ],
+
+        // Desabilita o Wayfinder em produção (Railway)
+        !isProd &&
+            wayfinder({
+                formVariants: true,
+            }),
+    ].filter(Boolean),
+
     esbuild: {
         jsx: 'automatic',
     },
+
     resolve: {
         alias: {
-            '@': path.resolve(__dirname, 'resources/js'), // <-- Alias para '@'
+            '@': path.resolve(__dirname, 'resources/js'),
         },
     },
 });
