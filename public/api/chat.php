@@ -62,7 +62,7 @@ $body = [
     ],
     'generationConfig' => [
         'temperature' => 0.2,       // Menos criativo, mais preciso
-        'maxOutputTokens' => 4000   // Ajuste conforme necessário
+        'maxOutputTokens' => 8000   // Ajuste conforme necessário
     ]
 ];
 
